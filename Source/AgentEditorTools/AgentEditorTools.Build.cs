@@ -14,5 +14,18 @@ public class AgentEditorTools : ModuleRules
 			"CoreUObject",
 			"Engine"
 		});
+
+		PrivateDependencyModuleNames.AddRange(new string[]
+		{
+			"Json",
+			"JsonUtilities",
+			"MaterialEditor",
+			"UnrealEd"
+		});
+
+		if (Target.Configuration != UnrealTargetConfiguration.Test && Target.Configuration != UnrealTargetConfiguration.Shipping)
+		{
+			PrivateDependencyModuleNames.Add("CQTest");
+		}
 	}
 }
