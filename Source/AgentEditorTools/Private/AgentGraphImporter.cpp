@@ -25,6 +25,7 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace AgentGraphImporterLocal
 {
@@ -39,6 +40,9 @@ static constexpr TCHAR LinkedToTerminator[] = TEXT(")");
 static constexpr TCHAR LinkSeparator[] = TEXT(",");
 static constexpr TCHAR LinkPartSeparator[] = TEXT(" ");
 static constexpr TCHAR LineBreak[] = TEXT("\n");
+static constexpr TCHAR AssetNotFoundDetail[] = TEXT("No asset was given to import into");
+static constexpr TCHAR EmptyImportFormat[] = TEXT("Importing the node text (%d characters after removing root nodes) into %s created no nodes");
+static constexpr TCHAR MalformedRootLinkFormat[] = TEXT("Root pin '%s' has a LinkedTo entry '%s' that is not a node name followed by a pin id");
 static constexpr TCHAR UnsupportedAssetFormat[] = TEXT("%s is a %s, not a material or material function");
 static constexpr TCHAR EditorOpenFormat[] = TEXT("An asset editor for %s is open");
 static constexpr TCHAR RootInFunctionFormat[] = TEXT("%s is a material function and has no root node");
@@ -97,7 +101,7 @@ static FString ExtractBetween(const FString& Line, const TCHAR* Key, const TCHAR
 	return Line.Mid(ValueStart, ValueEnd - ValueStart);
 }
 
-static FRootPinLinks ParseRootPin(const FString& PinLine)
+static FRootPinLinks ParseRootPin(const FString& PinLine, FAgentGraphImportResult& Result)
 {
 	FRootPinLinks Pin;
 	Pin.PinName = FName(*ExtractBetween(PinLine, PinNameKey, PinNameTerminator));
@@ -106,19 +110,21 @@ static FRootPinLinks ParseRootPin(const FString& PinLine)
 	ExtractBetween(PinLine, LinkedToKey, LinkedToTerminator).ParseIntoArray(Links, LinkSeparator, true);
 	for (const FString& Link : Links)
 	{
+		const FString TrimmedLink = Link.TrimStartAndEnd();
 		FString NodeName;
 		FString PinIdText;
 		FGuid PinId;
-		if (Link.TrimStartAndEnd().Split(LinkPartSeparator, &NodeName, &PinIdText))
+		if (!TrimmedLink.Split(LinkPartSeparator, &NodeName, &PinIdText) || !FGuid::Parse(PinIdText, PinId))
 		{
-			FGuid::Parse(PinIdText, PinId);
+			AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedRootPin, FString::Printf(MalformedRootLinkFormat, *Pin.PinName.ToString(), *TrimmedLink));
+			continue;
 		}
 		Pin.LinkedPinIds.Add(PinId);
 	}
 	return Pin;
 }
 
-static void ParseRootPins(const FString& RootBlock, TArray<FRootPinLinks>& OutRootPins)
+static void ParseRootPins(const FString& RootBlock, TArray<FRootPinLinks>& OutRootPins, FAgentGraphImportResult& Result)
 {
 	int32 PinStart = RootBlock.Find(PinMarker, ESearchCase::CaseSensitive);
 	while (PinStart != INDEX_NONE)
@@ -128,12 +134,12 @@ static void ParseRootPins(const FString& RootBlock, TArray<FRootPinLinks>& OutRo
 		{
 			LineEnd = RootBlock.Len();
 		}
-		OutRootPins.Add(ParseRootPin(RootBlock.Mid(PinStart, LineEnd - PinStart)));
+		OutRootPins.Add(ParseRootPin(RootBlock.Mid(PinStart, LineEnd - PinStart), Result));
 		PinStart = RootBlock.Find(PinMarker, ESearchCase::CaseSensitive, ESearchDir::FromStart, LineEnd);
 	}
 }
 
-static bool ExtractRootNodes(const FString& Text, FString& OutNodeText, TArray<FRootPinLinks>& OutRootPins)
+static bool ExtractRootNodes(const FString& Text, FString& OutNodeText, TArray<FRootPinLinks>& OutRootPins, FAgentGraphImportResult& Result)
 {
 	const FString RootBegin = FString(BeginObjectClassPrefix) + UMaterialGraphNode_Root::StaticClass()->GetPathName() + LinkPartSeparator;
 	OutNodeText.Reset();
@@ -150,7 +156,7 @@ static bool ExtractRootNodes(const FString& Text, FString& OutNodeText, TArray<F
 		const int32 EndLineStart = Text.Find(TopLevelEndObject, ESearchCase::CaseSensitive, ESearchDir::FromStart, BlockStart);
 		const int32 BlockEnd = EndLineStart == INDEX_NONE ? Text.Len() : EndLineStart + FCString::Strlen(TopLevelEndObject);
 		OutNodeText += Text.Mid(SearchFrom, BlockStart - SearchFrom);
-		ParseRootPins(Text.Mid(BlockStart, BlockEnd - BlockStart), OutRootPins);
+		ParseRootPins(Text.Mid(BlockStart, BlockEnd - BlockStart), OutRootPins, Result);
 		bFoundRoot = true;
 		SearchFrom = BlockEnd;
 	}
@@ -208,16 +214,16 @@ static UMaterial* MakeFunctionEditMaterial(UMaterialFunction& Function)
 struct FTemporaryGraph
 {
 	UMaterial& GraphMaterial;
-	UMaterialGraph* Graph = nullptr;
+	TStrongObjectPtr<UMaterialGraph> Graph;
 
 	FTemporaryGraph(UMaterial& InGraphMaterial, UMaterialFunction* Function)
 		: GraphMaterial(InGraphMaterial)
 	{
-		Graph = CastChecked<UMaterialGraph>(FBlueprintEditorUtils::CreateNewGraph(&GraphMaterial, NAME_None, UMaterialGraph::StaticClass(), UMaterialGraphSchema::StaticClass()));
+		Graph.Reset(CastChecked<UMaterialGraph>(FBlueprintEditorUtils::CreateNewGraph(&GraphMaterial, NAME_None, UMaterialGraph::StaticClass(), UMaterialGraphSchema::StaticClass())));
 		Graph->SetFlags(RF_Transient);
 		Graph->Material = &GraphMaterial;
 		Graph->MaterialFunction = Function;
-		GraphMaterial.MaterialGraph = Graph;
+		GraphMaterial.MaterialGraph = Graph.Get();
 		Graph->RebuildGraph();
 	}
 
@@ -266,7 +272,7 @@ static void FixUpPastedFunctionCall(UMaterialExpressionMaterialFunctionCall& Fun
 		}
 	}
 
-	if (FunctionCall.MaterialFunction == nullptr && FunctionCall.FunctionInputs.IsEmpty() && FunctionCall.FunctionOutputs.IsEmpty())
+	if (FunctionCall.GraphNode && FunctionCall.MaterialFunction == nullptr && FunctionCall.FunctionInputs.IsEmpty() && FunctionCall.FunctionOutputs.IsEmpty())
 	{
 		FunctionCall.GraphNode->Pins.Empty();
 	}
@@ -307,9 +313,9 @@ static void RegisterPastedNodes(const UMaterialGraph& Graph, const TSet<UEdGraph
 	TArray<UMaterialExpression*> NewExpressions;
 	for (UEdGraphNode* Node : PastedNodes)
 	{
-		if (UMaterialGraphNode* GraphNode = Cast<UMaterialGraphNode>(Node))
+		const UMaterialGraphNode* GraphNode = Cast<UMaterialGraphNode>(Node);
+		if (UMaterialExpression* NewExpression = GraphNode ? GraphNode->MaterialExpression.Get() : nullptr)
 		{
-			UMaterialExpression* NewExpression = GraphNode->MaterialExpression;
 			NewExpression->Material = &GraphMaterial;
 			NewExpression->Function = Function;
 			NewExpression->SubgraphExpression = Graph.SubgraphExpression;
@@ -440,7 +446,7 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 	FAgentGraphImportResult Result;
 	if (!Asset)
 	{
-		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::AssetNotFound, FString());
+		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::AssetNotFound, AssetNotFoundDetail);
 		return Finish(Result);
 	}
 	Result.Asset = Asset->GetPathName();
@@ -461,7 +467,7 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 
 	FString NodeText;
 	TArray<FRootPinLinks> RootPins;
-	const bool bHasRoot = ExtractRootNodes(Text, NodeText, RootPins);
+	const bool bHasRoot = ExtractRootNodes(Text, NodeText, RootPins, Result);
 	if (Function && bHasRoot)
 	{
 		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::RootInFunction, FString::Printf(RootInFunctionFormat, *Result.Asset));
@@ -478,10 +484,10 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 		FTemporaryGraph TemporaryGraph(GraphMaterial, Function);
 
 		TSet<UEdGraphNode*> PastedNodes;
-		FEdGraphUtilities::ImportNodesFromText(TemporaryGraph.Graph, NodeText, PastedNodes);
+		FEdGraphUtilities::ImportNodesFromText(TemporaryGraph.Graph.Get(), NodeText, PastedNodes);
 		if (PastedNodes.IsEmpty())
 		{
-			AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::EmptyImport, FString());
+			AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::EmptyImport, FString::Printf(EmptyImportFormat, NodeText.Len(), *Result.Asset));
 			return Finish(Result);
 		}
 

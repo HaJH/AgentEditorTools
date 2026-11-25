@@ -5,6 +5,13 @@
 #include "AgentGraphImporter.h"
 #include "JsonObjectConverter.h"
 
+namespace AgentGraphImportLibraryLocal
+{
+
+static constexpr TCHAR JsonConversionFailedFormat[] = TEXT("Converting the graph import result for %s to JSON failed");
+
+}
+
 FAgentGraphImportResult UAgentGraphImportLibrary::ImportGraphText(UObject* Asset, const FString& Text, bool bReplace, bool bSave)
 {
 	return FAgentGraphImporter::Import(Asset, Text, bReplace, bSave);
@@ -13,6 +20,6 @@ FAgentGraphImportResult UAgentGraphImportLibrary::ImportGraphText(UObject* Asset
 FString UAgentGraphImportLibrary::GraphImportResultToJson(const FAgentGraphImportResult& Result)
 {
 	FString Json;
-	FJsonObjectConverter::UStructToJsonObjectString(Result, Json);
+	verifyf(FJsonObjectConverter::UStructToJsonObjectString(Result, Json), AgentGraphImportLibraryLocal::JsonConversionFailedFormat, *Result.Asset);
 	return Json;
 }

@@ -39,18 +39,24 @@ static constexpr TCHAR FirstParameterNodeGuid[] = TEXT("B10000000000000000000000
 static constexpr TCHAR SecondParameterNodeGuid[] = TEXT("B1000000000000000000000000000004");
 static constexpr TCHAR CommentNodeGuid[] = TEXT("B1000000000000000000000000000005");
 static constexpr TCHAR CommentGuid[] = TEXT("C1000000000000000000000000000005");
+static constexpr TCHAR DeclarationExpressionGuid[] = TEXT("C1000000000000000000000000000001");
+static constexpr TCHAR UsageExpressionGuid[] = TEXT("C1000000000000000000000000000002");
+static constexpr TCHAR FirstParameterExpressionGuid[] = TEXT("C1000000000000000000000000000003");
+static constexpr TCHAR SecondParameterExpressionGuid[] = TEXT("C1000000000000000000000000000004");
 static constexpr const TCHAR* ExpressionGuidsInText[] =
 {
-	TEXT("C1000000000000000000000000000001"),
-	TEXT("C1000000000000000000000000000002"),
-	TEXT("C1000000000000000000000000000003"),
-	TEXT("C1000000000000000000000000000004")
+	DeclarationExpressionGuid,
+	UsageExpressionGuid,
+	FirstParameterExpressionGuid,
+	SecondParameterExpressionGuid
 };
-static constexpr TCHAR DeclarationProperties[] = TEXT("      VariableGuid=D1000000000000000000000000000001\n      MaterialExpressionGuid=C1000000000000000000000000000001\n");
-static constexpr TCHAR UsageProperties[] = TEXT("      DeclarationGuid=D1000000000000000000000000000001\n      MaterialExpressionGuid=C1000000000000000000000000000002\n");
-static constexpr TCHAR FirstParameterProperties[] = TEXT("      DefaultValue=1.000000\n      ParameterName=\"Strength\"\n      MaterialExpressionGuid=C1000000000000000000000000000003\n");
-static constexpr TCHAR SecondParameterProperties[] = TEXT("      DefaultValue=2.000000\n      ParameterName=\"Strength\"\n      MaterialExpressionGuid=C1000000000000000000000000000004\n");
+static constexpr TCHAR RerouteVariableGuid[] = TEXT("D1000000000000000000000000000001");
 static constexpr TCHAR SharedParameterName[] = TEXT("Strength");
+static constexpr TCHAR FirstParameterValue[] = TEXT("1.000000");
+static constexpr TCHAR SecondParameterValue[] = TEXT("2.000000");
+static constexpr TCHAR DeclarationPropertiesFormat[] = TEXT("      VariableGuid=%s\n      MaterialExpressionGuid=%s\n");
+static constexpr TCHAR UsagePropertiesFormat[] = TEXT("      DeclarationGuid=%s\n      MaterialExpressionGuid=%s\n");
+static constexpr TCHAR ParameterPropertiesFormat[] = TEXT("      DefaultValue=%s\n      ParameterName=\"%s\"\n      MaterialExpressionGuid=%s\n");
 static constexpr TCHAR CommentText[] = TEXT("Fixture Note");
 static constexpr TCHAR InputPinName[] = TEXT("Input");
 static constexpr TCHAR OutputPinName[] = TEXT("Output");
@@ -58,6 +64,10 @@ static constexpr TCHAR OutputPinName[] = TEXT("Output");
 static FString PasteFixupNodes()
 {
 	using namespace AgentGraphImportT3D;
+	const FString DeclarationProperties = FString::Printf(DeclarationPropertiesFormat, RerouteVariableGuid, DeclarationExpressionGuid);
+	const FString UsageProperties = FString::Printf(UsagePropertiesFormat, RerouteVariableGuid, UsageExpressionGuid);
+	const FString FirstParameterProperties = FString::Printf(ParameterPropertiesFormat, FirstParameterValue, SharedParameterName, FirstParameterExpressionGuid);
+	const FString SecondParameterProperties = FString::Printf(ParameterPropertiesFormat, SecondParameterValue, SharedParameterName, SecondParameterExpressionGuid);
 	return ExpressionNode(DeclarationNode, *UMaterialExpressionNamedRerouteDeclaration::StaticClass(), DeclarationName, DeclarationProperties, 0, DeclarationNodeGuid,
 			Pin(DeclarationInputPin, InputPinName, EGPD_Input) + Pin(DeclarationOutputPin, OutputPinName, EGPD_Output))
 		+ ExpressionNode(UsageNode, *UMaterialExpressionNamedRerouteUsage::StaticClass(), UsageName, UsageProperties, 300, UsageNodeGuid,
