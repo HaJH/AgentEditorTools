@@ -17,6 +17,11 @@ FAgentGraphImportResult UAgentGraphImportLibrary::ImportGraphText(UObject* Asset
 	return FAgentGraphImporter::Import(Asset, Text, bReplace, bSave);
 }
 
+FAgentGraphImportResult UAgentGraphImportLibrary::ImportGraphFile(const FString& AssetPath, const FString& T3DFilePath, bool bReplace, bool bSave)
+{
+	return FAgentGraphImporter::ImportFile(AssetPath, T3DFilePath, bReplace, bSave);
+}
+
 FString UAgentGraphImportLibrary::GraphImportResultToJson(const FAgentGraphImportResult& Result)
 {
 	FString Json;

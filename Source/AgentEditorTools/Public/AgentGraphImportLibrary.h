@@ -18,5 +18,8 @@ public:
 	static FAgentGraphImportResult ImportGraphText(UObject* Asset, const FString& Text, bool bReplace, bool bSave = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Agent Editor Tools|Graph Import")
+	static FAgentGraphImportResult ImportGraphFile(const FString& AssetPath, const FString& T3DFilePath, bool bReplace, bool bSave = true);
+
+	UFUNCTION(BlueprintCallable, Category = "Agent Editor Tools|Graph Import")
 	static FString GraphImportResultToJson(const FAgentGraphImportResult& Result);
 };

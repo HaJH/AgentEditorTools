@@ -17,6 +17,7 @@ public class AgentEditorToolsToolset : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"AgentEditorTools",
 			"ToolsetRegistry"
 		});
 	}

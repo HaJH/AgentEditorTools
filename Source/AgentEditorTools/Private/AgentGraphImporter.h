@@ -11,4 +11,5 @@ class FAgentGraphImporter
 {
 public:
 	static FAgentGraphImportResult Import(UObject* Asset, const FString& Text, bool bReplace, bool bSave);
+	static FAgentGraphImportResult ImportFile(const FString& AssetPath, const FString& T3DFilePath, bool bReplace, bool bSave);
 };

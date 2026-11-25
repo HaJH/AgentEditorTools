@@ -21,6 +21,7 @@
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionTextureBase.h"
 #include "Materials/MaterialFunction.h"
+#include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/Package.h"
@@ -49,6 +50,9 @@ static constexpr TCHAR RootInFunctionFormat[] = TEXT("%s is a material function 
 static constexpr TCHAR UnmatchedRootPinFormat[] = TEXT("The target root has no pin named '%s'");
 static constexpr TCHAR UnresolvedRootLinkFormat[] = TEXT("Root pin '%s' links to pin %s, which is not among the imported nodes");
 static constexpr TCHAR SaveFailedFormat[] = TEXT("Saving package %s failed");
+static constexpr TCHAR AssetPathNotFoundFormat[] = TEXT("No asset was found at '%s'");
+static constexpr TCHAR FileReadFailedFormat[] = TEXT("Reading the T3D file '%s' failed");
+static constexpr TCHAR ObjectNameSeparator[] = TEXT(".");
 
 struct FRootPinLinks
 {
@@ -437,6 +441,42 @@ static bool SaveAssetPackage(UObject& Asset)
 	return UPackage::SavePackage(Package, &Asset, *Filename, SaveArgs);
 }
 
+static UObject* LoadAssetAtPath(const FString& AssetPath)
+{
+	const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
+	if (!FPackageName::IsValidLongPackageName(PackageName))
+	{
+		return nullptr;
+	}
+	const FString ObjectPath = PackageName == AssetPath ? AssetPath + ObjectNameSeparator + FPackageName::GetShortName(PackageName) : AssetPath;
+	return LoadObject<UObject>(nullptr, *ObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+}
+
+}
+
+FAgentGraphImportResult FAgentGraphImporter::ImportFile(const FString& AssetPath, const FString& T3DFilePath, bool bReplace, bool bSave)
+{
+	using namespace AgentGraphImporterLocal;
+
+	FAgentGraphImportResult Result;
+	UObject* Asset = LoadAssetAtPath(AssetPath);
+	if (!Asset)
+	{
+		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::AssetNotFound, FString::Printf(AssetPathNotFoundFormat, *AssetPath));
+	}
+
+	FString Text;
+	if (!FFileHelper::LoadFileToString(Text, *T3DFilePath))
+	{
+		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::FileReadFailed, FString::Printf(FileReadFailedFormat, *T3DFilePath));
+	}
+
+	if (!Result.Diagnostics.IsEmpty())
+	{
+		Result.Asset = AssetPath;
+		return Finish(Result);
+	}
+	return Import(Asset, Text, bReplace, bSave);
 }
 
 FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FString& Text, bool bReplace, bool bSave)
