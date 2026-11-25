@@ -20,6 +20,8 @@ public class AgentEditorTools : ModuleRules
 			"Json",
 			"JsonUtilities",
 			"MaterialEditor",
+			"Slate",
+			"SlateCore",
 			"UnrealEd"
 		});
 
