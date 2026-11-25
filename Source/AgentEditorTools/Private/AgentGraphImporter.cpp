@@ -479,7 +479,12 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 		DeleteAllExpressions(Material, Function);
 	}
 
-	UMaterial& GraphMaterial = Material ? *Material : *MakeFunctionEditMaterial(*Function);
+	TStrongObjectPtr<UMaterial> FunctionEditMaterial;
+	if (Function)
+	{
+		FunctionEditMaterial.Reset(MakeFunctionEditMaterial(*Function));
+	}
+	UMaterial& GraphMaterial = Material ? *Material : *FunctionEditMaterial;
 	{
 		FTemporaryGraph TemporaryGraph(GraphMaterial, Function);
 

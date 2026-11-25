@@ -12,6 +12,7 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Tests/Support/AgentGraphImportT3D.h"
 #include "UObject/Package.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace AgentGraphImportEditorOpenTests
 {
@@ -40,7 +41,7 @@ public:
 
 TEST_CLASS(AgentGraphImporterEditorOpen, "AgentEditorTools.Integration.GraphImport")
 {
-	UMaterial* Material = nullptr;
+	TStrongObjectPtr<UMaterial> Material;
 	UAssetEditorSubsystem* AssetEditors = nullptr;
 	FFakeAssetEditor FakeEditor;
 	bool bFakeEditorOpen = false;
@@ -50,7 +51,7 @@ TEST_CLASS(AgentGraphImporterEditorOpen, "AgentEditorTools.Integration.GraphImpo
 		ASSERT_THAT(IsNotNull(GEditor));
 		AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
 		ASSERT_THAT(IsNotNull(AssetEditors));
-		Material = NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient);
+		Material.Reset(NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient));
 	}
 
 	AFTER_EACH()
@@ -65,13 +66,13 @@ TEST_CLASS(AgentGraphImporterEditorOpen, "AgentEditorTools.Integration.GraphImpo
 	TEST_METHOD(OpenEditorRejectsImportWithoutChange)
 	{
 		using namespace AgentGraphImportT3D;
-		UMaterialExpression* Existing = UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionConstant::StaticClass());
-		AssetEditors->NotifyAssetOpened(Material, &FakeEditor);
+		UMaterialExpression* Existing = UMaterialEditingLibrary::CreateMaterialExpression(Material.Get(), UMaterialExpressionConstant::StaticClass());
+		AssetEditors->NotifyAssetOpened(Material.Get(), &FakeEditor);
 		bFakeEditorOpen = true;
 
 		const FString Text = ExpressionNode(ConstantNode, *UMaterialExpressionConstant::StaticClass(), ConstantName, ConstantProperties, 0, ConstantNodeGuid,
 			Pin(ConstantOutputPin, OutputPinName, EGPD_Output));
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material, Text, true, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), Text, true, false);
 
 		ASSERT_THAT(IsFalse(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::EditorOpen)));

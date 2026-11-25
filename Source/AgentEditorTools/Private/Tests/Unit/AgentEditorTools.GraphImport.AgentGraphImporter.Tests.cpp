@@ -15,6 +15,7 @@
 #include "MaterialExpressionIO.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
 #include "Tests/Support/AgentGraphImportT3D.h"
+#include "UObject/StrongObjectPtr.h"
 #include "UObject/Package.h"
 
 namespace AgentGraphImporterTests
@@ -101,23 +102,23 @@ static ExpressionType* FindExpression(const OwnerType& Owner)
 
 TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 {
-	UMaterial* Material = nullptr;
-	UMaterialFunction* Function = nullptr;
+	TStrongObjectPtr<UMaterial> Material;
+	TStrongObjectPtr<UMaterialFunction> Function;
 
 	BEFORE_EACH()
 	{
-		Material = NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient);
-		Function = NewObject<UMaterialFunction>(GetTransientPackage(), NAME_None, RF_Transient);
+		Material.Reset(NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient));
+		Function.Reset(NewObject<UMaterialFunction>(GetTransientPackage(), NAME_None, RF_Transient));
 	}
 
 	FString BaseColorPinName() const
 	{
-		return FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_BaseColor, Material).ToString();
+		return FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_BaseColor, Material.Get()).ToString();
 	}
 
 	TEST_METHOD(ConstantTimesConstantFeedsBaseColor)
 	{
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material, ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorPinName()), false, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorPinName()), false, false);
 
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(Result.Diagnostics.IsEmpty()));
@@ -134,9 +135,9 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 
 	TEST_METHOD(ReplaceRemovesExistingExpressions)
 	{
-		UMaterialExpression* Existing = UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionConstant::StaticClass());
+		UMaterialExpression* Existing = UMaterialEditingLibrary::CreateMaterialExpression(Material.Get(), UMaterialExpressionConstant::StaticClass());
 
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material, ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorPinName()), true, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorPinName()), true, false);
 
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 		ASSERT_THAT(IsFalse(Material->GetExpressions().Contains(Existing)));
@@ -145,9 +146,9 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 
 	TEST_METHOD(AppendKeepsExistingExpressions)
 	{
-		UMaterialExpression* Existing = UMaterialEditingLibrary::CreateMaterialExpression(Material, UMaterialExpressionConstant::StaticClass());
+		UMaterialExpression* Existing = UMaterialEditingLibrary::CreateMaterialExpression(Material.Get(), UMaterialExpressionConstant::StaticClass());
 
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material, ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorPinName()), false, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorPinName()), false, false);
 
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(Material->GetExpressions().Contains(Existing)));
@@ -156,7 +157,7 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 
 	TEST_METHOD(FunctionInputAndOutputLandInFunction)
 	{
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function, FunctionInputOutputNodes(), false, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), false, false);
 
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 		ASSERT_THAT(AreEqual(2, Function->GetExpressions().Num()));
@@ -166,14 +167,14 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 		ASSERT_THAT(IsNotNull(Input));
 		ASSERT_THAT(IsNotNull(Output));
 		ASSERT_THAT(IsTrue(Output->A.Expression == Input));
-		ASSERT_THAT(IsTrue(Input->GetOuter() == Function));
-		ASSERT_THAT(IsTrue(Input->Function == Function));
+		ASSERT_THAT(IsTrue(Input->GetOuter() == Function.Get()));
+		ASSERT_THAT(IsTrue(Input->Function == Function.Get()));
 		ASSERT_THAT(IsNull(Input->Material.Get()));
 	}
 
 	TEST_METHOD(RootInFunctionIsRejectedBeforeAnyChange)
 	{
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function, FunctionInputOutputNodes() + RootLinkedToMultiply(BaseColorPinName()), false, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes() + RootLinkedToMultiply(BaseColorPinName()), false, false);
 
 		ASSERT_THAT(IsFalse(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::RootInFunction)));
@@ -182,7 +183,7 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 
 	TEST_METHOD(EmptyTextIsEmptyImport)
 	{
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material, FString(), false, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), FString(), false, false);
 
 		ASSERT_THAT(IsFalse(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::EmptyImport)));
@@ -191,7 +192,7 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 
 	TEST_METHOD(RootPinMissingFromTargetIsReported)
 	{
-		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material, ConstantMultiplyNodes() + RootLinkedToMultiply(MissingRootPinName), false, false);
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), ConstantMultiplyNodes() + RootLinkedToMultiply(MissingRootPinName), false, false);
 
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedRootPin)));

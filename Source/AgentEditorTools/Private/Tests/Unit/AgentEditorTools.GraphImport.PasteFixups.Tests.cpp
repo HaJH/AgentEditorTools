@@ -12,6 +12,7 @@
 #include "Misc/Guid.h"
 #include "Tests/Support/AgentGraphImportT3D.h"
 #include "UObject/Package.h"
+#include "UObject/StrongObjectPtr.h"
 
 namespace AgentGraphImportPasteFixupsTests
 {
@@ -81,13 +82,13 @@ static FString PasteFixupNodes()
 
 TEST_CLASS(AgentGraphImporterPasteFixups, "AgentEditorTools.Unit.GraphImport")
 {
-	UMaterial* Material = nullptr;
+	TStrongObjectPtr<UMaterial> Material;
 	FAgentGraphImportResult Result;
 
 	BEFORE_EACH()
 	{
-		Material = NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient);
-		Result = FAgentGraphImporter::Import(Material, PasteFixupNodes(), false, false);
+		Material.Reset(NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient));
+		Result = FAgentGraphImporter::Import(Material.Get(), PasteFixupNodes(), false, false);
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 	}
 
