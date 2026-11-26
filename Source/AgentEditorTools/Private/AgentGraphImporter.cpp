@@ -6,6 +6,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphUtilities.h"
 #include "Editor.h"
+#include "Internationalization/Text.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "MaterialEditingLibrary.h"
 #include "MaterialGraph/MaterialGraph.h"
@@ -358,11 +359,23 @@ static void RegisterPastedNodes(const UMaterialGraph& Graph, const TSet<UEdGraph
 	}
 }
 
-static UEdGraphPin* FindRootInputPin(const UMaterialGraphNode_Root& RootNode, FName PinName)
+static bool IsRootInputPinNamed(const UMaterialGraph& Graph, const UEdGraphPin& Pin, FName PinName)
 {
-	for (UEdGraphPin* Pin : RootNode.Pins)
+	if (Pin.PinName == PinName)
 	{
-		if (Pin->Direction == EGPD_Input && Pin->PinName == PinName)
+		return true;
+	}
+	check(Graph.MaterialInputs.IsValidIndex(Pin.SourceIndex));
+	const FText& InputName = Graph.MaterialInputs[Pin.SourceIndex].GetName();
+	const FString* InputSourceName = FTextInspector::GetSourceString(InputName);
+	return InputSourceName && FAgentGraphImporter::MatchesRootPinSourceName(PinName, Pin.PinName.ToString(), InputName.ToString(), *InputSourceName);
+}
+
+static UEdGraphPin* FindRootInputPin(const UMaterialGraph& Graph, FName PinName)
+{
+	for (UEdGraphPin* Pin : Graph.RootNode->Pins)
+	{
+		if (Pin->Direction == EGPD_Input && IsRootInputPinNamed(Graph, *Pin, PinName))
 		{
 			return Pin;
 		}
@@ -390,7 +403,7 @@ static void ConnectRoot(const UMaterialGraph& Graph, const TSet<UEdGraphNode*>& 
 			continue;
 		}
 
-		UEdGraphPin* TargetPin = FindRootInputPin(*Graph.RootNode, RootPin.PinName);
+		UEdGraphPin* TargetPin = FindRootInputPin(Graph, RootPin.PinName);
 		if (!TargetPin)
 		{
 			AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedRootPin, FString::Printf(UnmatchedRootPinFormat, *RootPin.PinName.ToString()));
@@ -452,6 +465,16 @@ static UObject* LoadAssetAtPath(const FString& AssetPath)
 	return LoadObject<UObject>(nullptr, *ObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
 }
 
+}
+
+bool FAgentGraphImporter::MatchesRootPinSourceName(FName RequestedPinName, const FString& ActualPinName, const FString& InputDisplayName, const FString& InputSourceName)
+{
+	if (!ActualPinName.StartsWith(InputDisplayName, ESearchCase::CaseSensitive))
+	{
+		return false;
+	}
+	const FString SourcePinName = InputSourceName + ActualPinName.RightChop(InputDisplayName.Len());
+	return !SourcePinName.IsEmpty() && FName(*SourcePinName) == RequestedPinName;
 }
 
 FAgentGraphImportResult FAgentGraphImporter::ImportFile(const FString& AssetPath, const FString& T3DFilePath, bool bReplace, bool bSave)

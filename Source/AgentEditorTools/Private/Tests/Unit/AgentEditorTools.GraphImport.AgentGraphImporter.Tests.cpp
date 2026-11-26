@@ -5,6 +5,7 @@
 #include "AgentGraphImporter.h"
 #include "AgentGraphImportResult.h"
 #include "CQTest.h"
+#include "Internationalization/Text.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpressionConstant.h"
@@ -42,6 +43,12 @@ static constexpr TCHAR OutputPinName[] = TEXT("Output");
 static constexpr TCHAR InputAPinName[] = TEXT("A");
 static constexpr TCHAR InputBPinName[] = TEXT("B");
 static constexpr TCHAR MissingRootPinName[] = TEXT("No Such Input");
+static constexpr TCHAR LocalizedInputName[] = TEXT("Endfarbe");
+static constexpr TCHAR SourceInputName[] = TEXT("Final Color");
+static constexpr TCHAR OtherSourceInputName[] = TEXT("Opacity");
+static constexpr TCHAR LocalizedSuffixedInputName[] = TEXT("Brechung");
+static constexpr TCHAR SourceSuffixedInputName[] = TEXT("Refraction");
+static constexpr TCHAR PinNameSuffix[] = TEXT(" (IOR)");
 
 static constexpr TCHAR FunctionInputNode[] = TEXT("MaterialGraphNode_0");
 static constexpr TCHAR FunctionOutputNode[] = TEXT("MaterialGraphNode_1");
@@ -114,6 +121,43 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 	FString BaseColorPinName() const
 	{
 		return FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_BaseColor, Material.Get()).ToString();
+	}
+
+	FString BaseColorSourcePinName() const
+	{
+		const FText DisplayName = FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(MP_BaseColor, Material.Get());
+		const FString* SourceName = FTextInspector::GetSourceString(DisplayName);
+		return SourceName ? *SourceName : DisplayName.ToString();
+	}
+
+	TEST_METHOD(SourceRootPinNameFeedsBaseColor)
+	{
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Material.Get(), ConstantMultiplyNodes() + RootLinkedToMultiply(BaseColorSourcePinName()), false, false);
+
+		ASSERT_THAT(IsTrue(Result.bSucceeded));
+		ASSERT_THAT(IsFalse(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedRootPin)));
+		UMaterialExpressionMultiply* Multiply = FindExpression<UMaterialExpressionMultiply>(*Material);
+		ASSERT_THAT(IsNotNull(Multiply));
+		ASSERT_THAT(IsTrue(Material->GetEditorOnlyData()->BaseColor.Expression == Multiply));
+	}
+
+	TEST_METHOD(SourceNameMatchesLocalizedRootPin)
+	{
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::MatchesRootPinSourceName(SourceInputName, LocalizedInputName, LocalizedInputName, SourceInputName)));
+	}
+
+	TEST_METHOD(OtherSourceNameDoesNotMatchLocalizedRootPin)
+	{
+		ASSERT_THAT(IsFalse(FAgentGraphImporter::MatchesRootPinSourceName(OtherSourceInputName, LocalizedInputName, LocalizedInputName, SourceInputName)));
+	}
+
+	TEST_METHOD(SourceNameKeepsPinNameSuffix)
+	{
+		const FString ActualPinName = FString(LocalizedSuffixedInputName) + PinNameSuffix;
+		const FString RequestedPinName = FString(SourceSuffixedInputName) + PinNameSuffix;
+
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::MatchesRootPinSourceName(FName(*RequestedPinName), ActualPinName, LocalizedSuffixedInputName, SourceSuffixedInputName)));
+		ASSERT_THAT(IsFalse(FAgentGraphImporter::MatchesRootPinSourceName(SourceSuffixedInputName, ActualPinName, LocalizedSuffixedInputName, SourceSuffixedInputName)));
 	}
 
 	TEST_METHOD(ConstantTimesConstantFeedsBaseColor)
