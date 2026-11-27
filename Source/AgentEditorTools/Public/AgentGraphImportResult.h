@@ -16,6 +16,7 @@ enum class EAgentGraphImportDiagnosticKind : uint8
 	EmptyImport,
 	RootInFunction,
 	UnmatchedRootPin,
+	UnmatchedFunctionIO,
 	NoRoot,
 	CompileError,
 	SaveFailed

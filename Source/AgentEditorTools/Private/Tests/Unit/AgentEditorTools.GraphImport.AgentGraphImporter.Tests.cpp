@@ -13,6 +13,7 @@
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialFunction.h"
 #include "MaterialExpressionIO.h"
@@ -84,6 +85,11 @@ static constexpr TCHAR FunctionOutputName[] = TEXT("MaterialExpressionFunctionOu
 static constexpr TCHAR FunctionInputProperties[] = TEXT("      InputName=\"In\"\n      InputType=FunctionInput_Scalar\n      MaterialExpressionGuid=F0000000000000000000000000000001\n");
 static constexpr TCHAR FunctionOutputProperties[] = TEXT("      OutputName=\"Out\"\n      MaterialExpressionGuid=F0000000000000000000000000000002\n");
 static constexpr TCHAR FunctionOutputInputPinName[] = TEXT("Input");
+static constexpr TCHAR FunctionInputDisplayName[] = TEXT("In");
+static constexpr TCHAR FunctionOutputDisplayName[] = TEXT("Out");
+static constexpr TCHAR RenamedFunctionInputProperties[] = TEXT("      InputName=\"Renamed In\"\n      InputType=FunctionInput_Scalar\n      MaterialExpressionGuid=F0000000000000000000000000000001\n");
+static constexpr TCHAR RenamedFunctionOutputProperties[] = TEXT("      OutputName=\"Renamed Out\"\n      MaterialExpressionGuid=F0000000000000000000000000000002\n");
+static constexpr TCHAR QuotedNameFormat[] = TEXT("'%s'");
 
 static FString ConstantMultiplyNodes()
 {
@@ -106,15 +112,24 @@ static FString RootLinkedToMultiply(const FString& RootPinName)
 	return RootNode(RootNodeName, RootNodeGuid, Pin(RootInputPin, *RootPinName, EGPD_Input, RootFromMultiply));
 }
 
-static FString FunctionInputOutputNodes()
+static FString FunctionInputOutputNodes(const TCHAR* InputProperties = FunctionInputProperties, const TCHAR* OutputProperties = FunctionOutputProperties)
 {
 	using namespace AgentGraphImportT3D;
 	const FPinLink InputToOutput[] = { { FunctionOutputNode, FunctionOutputInputPin } };
 	const FPinLink OutputFromInput[] = { { FunctionInputNode, FunctionInputOutputPin } };
-	return ExpressionNode(FunctionInputNode, *UMaterialExpressionFunctionInput::StaticClass(), FunctionInputName, FunctionInputProperties, 0, FunctionInputNodeGuid,
+	return ExpressionNode(FunctionInputNode, *UMaterialExpressionFunctionInput::StaticClass(), FunctionInputName, InputProperties, 0, FunctionInputNodeGuid,
 			Pin(FunctionInputOutputPin, OutputPinName, EGPD_Output, InputToOutput))
-		+ ExpressionNode(FunctionOutputNode, *UMaterialExpressionFunctionOutput::StaticClass(), FunctionOutputName, FunctionOutputProperties, 300, FunctionOutputNodeGuid,
+		+ ExpressionNode(FunctionOutputNode, *UMaterialExpressionFunctionOutput::StaticClass(), FunctionOutputName, OutputProperties, 300, FunctionOutputNodeGuid,
 			Pin(FunctionOutputInputPin, FunctionOutputInputPinName, EGPD_Input, OutputFromInput));
+}
+
+static bool HasDiagnosticNaming(const FAgentGraphImportResult& Result, EAgentGraphImportDiagnosticKind Kind, const TCHAR* Name)
+{
+	const FString QuotedName = FString::Printf(QuotedNameFormat, Name);
+	return Result.Diagnostics.ContainsByPredicate([Kind, &QuotedName](const FAgentGraphImportDiagnostic& Diagnostic)
+	{
+		return Diagnostic.Kind == Kind && Diagnostic.Detail.Contains(QuotedName);
+	});
 }
 
 struct FRestoreCultureGuard
@@ -317,6 +332,41 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 		ASSERT_THAT(IsTrue(Input->GetOuter() == Function.Get()));
 		ASSERT_THAT(IsTrue(Input->Function == Function.Get()));
 		ASSERT_THAT(IsNull(Input->Material.Get()));
+	}
+
+	TEST_METHOD(ReplacedFunctionKeepsCallerConnections)
+	{
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), false, false).bSucceeded));
+
+		UMaterialExpressionMaterialFunctionCall* FunctionCall = Cast<UMaterialExpressionMaterialFunctionCall>(UMaterialEditingLibrary::CreateMaterialExpression(Material.Get(), UMaterialExpressionMaterialFunctionCall::StaticClass()));
+		UMaterialExpression* Constant = UMaterialEditingLibrary::CreateMaterialExpression(Material.Get(), UMaterialExpressionConstant::StaticClass());
+		ASSERT_THAT(IsNotNull(FunctionCall));
+		ASSERT_THAT(IsNotNull(Constant));
+		ASSERT_THAT(IsTrue(FunctionCall->SetMaterialFunction(Function.Get())));
+		ASSERT_THAT(AreEqual(1, FunctionCall->FunctionInputs.Num()));
+		FunctionCall->FunctionInputs[0].Input.Connect(0, Constant);
+		Material->GetEditorOnlyData()->BaseColor.Connect(0, FunctionCall);
+
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), true, false);
+		FunctionCall->UpdateFromFunctionResource();
+
+		ASSERT_THAT(IsTrue(Result.bSucceeded));
+		ASSERT_THAT(IsFalse(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO)));
+		ASSERT_THAT(AreEqual(1, FunctionCall->FunctionInputs.Num()));
+		ASSERT_THAT(IsTrue(FunctionCall->FunctionInputs[0].Input.Expression == Constant));
+		ASSERT_THAT(IsTrue(Material->GetEditorOnlyData()->BaseColor.Expression == FunctionCall));
+		ASSERT_THAT(IsTrue(UMaterialEditingLibrary::RecompileMaterial(Material.Get()).IsEmpty()));
+	}
+
+	TEST_METHOD(ReplaceReportsPreviousFunctionIOMissingFromText)
+	{
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), false, false).bSucceeded));
+
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(RenamedFunctionInputProperties, RenamedFunctionOutputProperties), true, false);
+
+		ASSERT_THAT(IsTrue(Result.bSucceeded));
+		ASSERT_THAT(IsTrue(HasDiagnosticNaming(Result, EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO, FunctionInputDisplayName)));
+		ASSERT_THAT(IsTrue(HasDiagnosticNaming(Result, EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO, FunctionOutputDisplayName)));
 	}
 
 	TEST_METHOD(RootInFunctionIsRejectedBeforeAnyChange)

@@ -56,6 +56,8 @@ static constexpr TCHAR AssetPathNotFoundFormat[] = TEXT("No asset was found at '
 static constexpr TCHAR FileReadFailedFormat[] = TEXT("Reading the T3D file '%s' failed");
 static constexpr TCHAR ObjectNameSeparator[] = TEXT(".");
 static constexpr TCHAR ShadingModelPinNameSeparator[] = TEXT(" or ");
+static constexpr TCHAR UnmatchedFunctionInputFormat[] = TEXT("The replaced function had an input named '%s' that the imported text does not have; function calls lose that input's connection");
+static constexpr TCHAR UnmatchedFunctionOutputFormat[] = TEXT("The replaced function had an output named '%s' that the imported text does not have; function calls lose that output's connections");
 
 struct FShadingModelPinName
 {
@@ -117,6 +119,7 @@ static bool IsErrorKind(EAgentGraphImportDiagnosticKind Kind)
 	switch (Kind)
 	{
 	case EAgentGraphImportDiagnosticKind::UnmatchedRootPin:
+	case EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO:
 	case EAgentGraphImportDiagnosticKind::NoRoot:
 	case EAgentGraphImportDiagnosticKind::CompileError:
 		return false;
@@ -251,6 +254,64 @@ static void DeleteAllExpressions(UMaterial* Material, UMaterialFunction* Functio
 		UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(Function, Expression);
 	}
 	RemoveAllComments(*Function);
+}
+
+struct FFunctionIOIds
+{
+	TMap<FName, FGuid> InputIds;
+	TMap<FName, FGuid> OutputIds;
+};
+
+static FFunctionIOIds CollectFunctionIOIds(const UMaterialFunction& Function)
+{
+	FFunctionIOIds Ids;
+	for (const UMaterialExpression* Expression : Function.GetExpressions())
+	{
+		if (const UMaterialExpressionFunctionInput* FunctionInput = Cast<UMaterialExpressionFunctionInput>(Expression))
+		{
+			Ids.InputIds.Add(FunctionInput->InputName, FunctionInput->Id);
+		}
+		else if (const UMaterialExpressionFunctionOutput* FunctionOutput = Cast<UMaterialExpressionFunctionOutput>(Expression))
+		{
+			Ids.OutputIds.Add(FunctionOutput->OutputName, FunctionOutput->Id);
+		}
+	}
+	return Ids;
+}
+
+template <typename ExpressionType>
+static void TakeOverPreviousId(ExpressionType& Expression, FName Name, TMap<FName, FGuid>& PreviousIds)
+{
+	FGuid PreviousId;
+	if (PreviousIds.RemoveAndCopyValue(Name, PreviousId))
+	{
+		Expression.Id = PreviousId;
+	}
+}
+
+static void ReportUnmatchedFunctionIO(const TMap<FName, FGuid>& UnmatchedIds, const TCHAR* Format, FAgentGraphImportResult& Result)
+{
+	for (const TPair<FName, FGuid>& Unmatched : UnmatchedIds)
+	{
+		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO, FString::Printf(Format, *Unmatched.Key.ToString()));
+	}
+}
+
+static void RestoreFunctionIOIds(const UMaterial& GraphMaterial, FFunctionIOIds& PreviousIds, FAgentGraphImportResult& Result)
+{
+	for (UMaterialExpression* Expression : GraphMaterial.GetExpressions())
+	{
+		if (UMaterialExpressionFunctionInput* FunctionInput = Cast<UMaterialExpressionFunctionInput>(Expression))
+		{
+			TakeOverPreviousId(*FunctionInput, FunctionInput->InputName, PreviousIds.InputIds);
+		}
+		else if (UMaterialExpressionFunctionOutput* FunctionOutput = Cast<UMaterialExpressionFunctionOutput>(Expression))
+		{
+			TakeOverPreviousId(*FunctionOutput, FunctionOutput->OutputName, PreviousIds.OutputIds);
+		}
+	}
+	ReportUnmatchedFunctionIO(PreviousIds.InputIds, UnmatchedFunctionInputFormat, Result);
+	ReportUnmatchedFunctionIO(PreviousIds.OutputIds, UnmatchedFunctionOutputFormat, Result);
 }
 
 static UMaterial* MakeFunctionEditMaterial(UMaterialFunction& Function)
@@ -618,6 +679,13 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 		return Finish(Result);
 	}
 
+	const bool bReplaceFunction = bReplace && Function;
+	FFunctionIOIds PreviousFunctionIOIds;
+	if (bReplaceFunction)
+	{
+		PreviousFunctionIOIds = CollectFunctionIOIds(*Function);
+	}
+
 	if (bReplace)
 	{
 		DeleteAllExpressions(Material, Function);
@@ -641,6 +709,11 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 		}
 
 		RegisterPastedNodes(*TemporaryGraph.Graph, PastedNodes, GraphMaterial, Function, Result);
+
+		if (bReplaceFunction)
+		{
+			RestoreFunctionIOIds(GraphMaterial, PreviousFunctionIOIds, Result);
+		}
 
 		if (Material)
 		{
