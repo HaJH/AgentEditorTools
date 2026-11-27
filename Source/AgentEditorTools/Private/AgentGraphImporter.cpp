@@ -25,6 +25,7 @@
 #include "Materials/MaterialFunction.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
+#include "Misc/StringFormatArg.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
@@ -56,8 +57,8 @@ static constexpr TCHAR AssetPathNotFoundFormat[] = TEXT("No asset was found at '
 static constexpr TCHAR FileReadFailedFormat[] = TEXT("Reading the T3D file '%s' failed");
 static constexpr TCHAR ObjectNameSeparator[] = TEXT(".");
 static constexpr TCHAR ShadingModelPinNameSeparator[] = TEXT(" or ");
-static constexpr TCHAR UnmatchedFunctionInputFormat[] = TEXT("The replaced function had an input named '%s' that the imported text does not have; function calls lose that input's connection");
-static constexpr TCHAR UnmatchedFunctionOutputFormat[] = TEXT("The replaced function had an output named '%s' that the imported text does not have; function calls lose that output's connections");
+static constexpr TCHAR UnmatchedFunctionInputFormat[] = TEXT("The replaced function had an input named '{0}' that the imported text does not have; function calls lose that input's connection");
+static constexpr TCHAR UnmatchedFunctionOutputFormat[] = TEXT("The replaced function had an output named '{0}' that the imported text does not have; function calls lose that output's connections");
 
 struct FShadingModelPinName
 {
@@ -293,7 +294,7 @@ static void ReportUnmatchedFunctionIO(const TMap<FName, FGuid>& UnmatchedIds, co
 {
 	for (const TPair<FName, FGuid>& Unmatched : UnmatchedIds)
 	{
-		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO, FString::Printf(Format, *Unmatched.Key.ToString()));
+		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO, FString::Format(Format, { Unmatched.Key.ToString() }));
 	}
 }
 
