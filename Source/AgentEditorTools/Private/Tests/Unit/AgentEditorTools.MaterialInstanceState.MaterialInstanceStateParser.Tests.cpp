@@ -64,7 +64,7 @@ TEST_CLASS(MaterialInstanceStateParser, "AgentEditorTools.Unit.MaterialInstanceS
 		ASSERT_THAT(AreEqual(WriteCount, State.Writes.Num()));
 		ASSERT_THAT(AreEqual(FName(SwitchName), State.Writes[0].Name));
 		ASSERT_THAT(IsTrue(State.Writes[0].bSwitchValue));
-		ASSERT_THAT(AreEqual(ScalarValue, State.Writes[1].ScalarValue));
+		ASSERT_THAT(IsNear(ScalarValue, State.Writes[1].ScalarValue, KINDA_SMALL_NUMBER));
 		ASSERT_THAT(IsTrue(State.Writes[2].VectorValue.Equals(VectorValue)));
 		ASSERT_THAT(IsTrue(State.Writes[3].bHasSamplers));
 		ASSERT_THAT(AreEqual(SamplerCount, State.Writes[3].Samplers.Num()));

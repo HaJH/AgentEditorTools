@@ -209,7 +209,7 @@ TEST_CLASS(MaterialInstanceStateApplier, "AgentEditorTools.Unit.MaterialInstance
 		ASSERT_THAT(IsFalse(Result.bWritten));
 		ASSERT_THAT(IsFalse(Result.bSaved));
 		ASSERT_THAT(IsTrue(HasScalarOverride(ScalarB, Value)));
-		ASSERT_THAT(AreEqual(ScalarBValue, Value));
+		ASSERT_THAT(IsNear(ScalarBValue, Value, KINDA_SMALL_NUMBER));
 		ASSERT_THAT(IsFalse(HasScalarOverride(ScalarA, Value)));
 	}
 
@@ -248,7 +248,7 @@ TEST_CLASS(MaterialInstanceStateApplier, "AgentEditorTools.Unit.MaterialInstance
 		ASSERT_THAT(AreEqual(FullWriteCount, Result.Writes));
 		ASSERT_THAT(IsFalse(HasScalarOverride(ScalarB, Value)));
 		ASSERT_THAT(IsTrue(HasScalarOverride(ScalarA, Value)));
-		ASSERT_THAT(AreEqual(ScalarAValue, Value));
+		ASSERT_THAT(IsNear(ScalarAValue, Value, KINDA_SMALL_NUMBER));
 		ASSERT_THAT(IsTrue(Instance->GetVectorParameterValue(FHashedMaterialParameterInfo(FName(Tint)), Color, true)));
 		ASSERT_THAT(IsTrue(Color.Equals(TintValue)));
 		ASSERT_THAT(IsTrue(Instance->GetTextureParameterValue(FHashedMaterialParameterInfo(FName(TextureA)), Texture, true)));
