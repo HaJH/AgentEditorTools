@@ -23,13 +23,17 @@
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionTextureBase.h"
 #include "Materials/MaterialFunction.h"
+#include "Materials/MaterialFunctionInterface.h"
 #include "Misc/FileHelper.h"
 #include "Misc/PackageName.h"
 #include "Misc/StringFormatArg.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "UObject/FindObjectFlags.h"
+#include "UObject/ObjectPtr.h"
 #include "UObject/Package.h"
 #include "UObject/SavePackage.h"
 #include "UObject/StrongObjectPtr.h"
+#include "UObject/UObjectHash.h"
 
 namespace AgentGraphImporterLocal
 {
@@ -59,6 +63,7 @@ static constexpr TCHAR ObjectNameSeparator[] = TEXT(".");
 static constexpr TCHAR ShadingModelPinNameSeparator[] = TEXT(" or ");
 static constexpr TCHAR UnmatchedFunctionInputFormat[] = TEXT("The replaced function had an input named '{0}' that the imported text does not have; function calls lose that input's connection");
 static constexpr TCHAR UnmatchedFunctionOutputFormat[] = TEXT("The replaced function had an output named '{0}' that the imported text does not have; function calls lose that output's connections");
+static constexpr TCHAR MissingEntriesFormat[] = TEXT("%s listed %d expressions and %d comments that no longer exist; they were dropped before the import");
 
 struct FShadingModelPinName
 {
@@ -123,6 +128,7 @@ static bool IsErrorKind(EAgentGraphImportDiagnosticKind Kind)
 	case EAgentGraphImportDiagnosticKind::UnmatchedFunctionIO:
 	case EAgentGraphImportDiagnosticKind::NoRoot:
 	case EAgentGraphImportDiagnosticKind::CompileError:
+	case EAgentGraphImportDiagnosticKind::MissingEntries:
 		return false;
 	default:
 		return true;
@@ -223,6 +229,40 @@ static bool IsAssetEditorOpen(UObject& Asset)
 	}
 	UAssetEditorSubsystem* AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
 	return AssetEditors && !AssetEditors->FindEditorsForAsset(&Asset).IsEmpty();
+}
+
+static void DetachLeftoverEditorOnlyData(UMaterialFunction& Function)
+{
+	const UMaterialFunctionInterfaceEditorOnlyData* CurrentEditorOnlyData = Function.GetEditorOnlyData();
+	TArray<UObject*> Subobjects;
+	GetObjectsWithOuter(&Function, Subobjects, EGetObjectsFlags::None);
+	for (UObject* Subobject : Subobjects)
+	{
+		if (Subobject != CurrentEditorOnlyData && Subobject->IsA<UMaterialFunctionInterfaceEditorOnlyData>())
+		{
+			UMaterialFunction* DiscardedOwner = NewObject<UMaterialFunction>(GetTransientPackage(), NAME_None, RF_Transient);
+			Subobject->Rename(nullptr, DiscardedOwner, REN_DontCreateRedirectors | REN_NonTransactional | REN_DoNotDirty);
+		}
+	}
+}
+
+template <typename EntryType>
+static int32 RemoveMissingEntries(TArray<TObjectPtr<EntryType>>& Entries)
+{
+	return Entries.RemoveAll([](const TObjectPtr<EntryType>& Entry)
+	{
+		return !IsValid(Entry.Get());
+	});
+}
+
+static void DropMissingEntries(FMaterialExpressionCollection& Collection, FAgentGraphImportResult& Result)
+{
+	const int32 MissingExpressions = RemoveMissingEntries(Collection.Expressions);
+	const int32 MissingComments = RemoveMissingEntries(Collection.EditorComments);
+	if (MissingExpressions != 0 || MissingComments != 0)
+	{
+		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::MissingEntries, FString::Printf(MissingEntriesFormat, *Result.Asset, MissingExpressions, MissingComments));
+	}
 }
 
 template <typename OwnerType>
@@ -679,6 +719,12 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::RootInFunction, FString::Printf(RootInFunctionFormat, *Result.Asset));
 		return Finish(Result);
 	}
+
+	if (Function)
+	{
+		DetachLeftoverEditorOnlyData(*Function);
+	}
+	DropMissingEntries(Material ? Material->GetExpressionCollection() : Function->GetExpressionCollection(), Result);
 
 	const bool bReplaceFunction = bReplace && Function;
 	FFunctionIOIds PreviousFunctionIOIds;

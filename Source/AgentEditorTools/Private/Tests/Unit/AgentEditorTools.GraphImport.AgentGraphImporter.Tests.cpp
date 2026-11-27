@@ -4,25 +4,37 @@
 
 #include "AgentGraphImporter.h"
 #include "AgentGraphImportResult.h"
+#include "Algo/AllOf.h"
 #include "CQTest.h"
 #include "Engine/EngineTypes.h"
+#include "HAL/FileManager.h"
 #include "Internationalization/Internationalization.h"
 #include "Internationalization/Text.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
+#include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionConstant.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "Materials/MaterialExpressionMultiply.h"
 #include "Materials/MaterialFunction.h"
+#include "Materials/MaterialFunctionInterface.h"
 #include "MaterialExpressionIO.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
+#include "Misc/Guid.h"
+#include "Misc/PackageName.h"
 #include "SceneTypes.h"
 #include "Tests/Support/AgentGraphImportT3D.h"
+#include "UObject/FindObjectFlags.h"
+#include "UObject/Linker.h"
+#include "UObject/ObjectPtr.h"
 #include "UObject/StrongObjectPtr.h"
 #include "UObject/Package.h"
+#include "UObject/UObjectGlobals.h"
+#include "UObject/UObjectHash.h"
 #include "UObject/UnrealType.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 namespace AgentGraphImporterTests
 {
@@ -90,6 +102,10 @@ static constexpr TCHAR FunctionOutputDisplayName[] = TEXT("Out");
 static constexpr TCHAR RenamedFunctionInputProperties[] = TEXT("      InputName=\"Renamed In\"\n      InputType=FunctionInput_Scalar\n      MaterialExpressionGuid=F0000000000000000000000000000001\n");
 static constexpr TCHAR RenamedFunctionOutputProperties[] = TEXT("      OutputName=\"Renamed Out\"\n      MaterialExpressionGuid=F0000000000000000000000000000002\n");
 static constexpr TCHAR QuotedNameFormat[] = TEXT("'%s'");
+static constexpr TCHAR LateSortingSourceFunctionName[] = TEXT("ZZSourceFunction");
+static constexpr TCHAR DuplicatedFunctionName[] = TEXT("DuplicatedFunction");
+static constexpr TCHAR SavedPackageRoot[] = TEXT("/Temp/AgentGraphImportTests/");
+static constexpr TCHAR ReloadedPackageSuffix[] = TEXT("_Reloaded");
 
 static FString ConstantMultiplyNodes()
 {
@@ -185,15 +201,100 @@ static ExpressionType* FindExpression(const OwnerType& Owner)
 	return nullptr;
 }
 
+static UObject* FindLeftoverEditorOnlyData(UMaterialFunction& Function)
+{
+	const UMaterialFunctionInterfaceEditorOnlyData* CurrentEditorOnlyData = Function.GetEditorOnlyData();
+	TArray<UObject*> Subobjects;
+	GetObjectsWithOuter(&Function, Subobjects, EGetObjectsFlags::None);
+	UObject* const* Leftover = Subobjects.FindByPredicate([CurrentEditorOnlyData](const UObject* Subobject)
+	{
+		return Subobject != CurrentEditorOnlyData && Subobject->IsA<UMaterialFunctionInterfaceEditorOnlyData>();
+	});
+	return Leftover ? *Leftover : nullptr;
+}
+
+static bool HoldsOnlyLiveExpressions(const UMaterialFunction& Function)
+{
+	return Algo::AllOf(Function.GetExpressions(), [](const TObjectPtr<UMaterialExpression>& Expression)
+	{
+		return IsValid(Expression.Get());
+	});
+}
+
+static bool HoldsExactlyExpressionsNamed(const UMaterialFunction& Function, const TArray<FString>& Names)
+{
+	return Function.GetExpressions().Num() == Names.Num() && HoldsOnlyLiveExpressions(Function) && Algo::AllOf(Function.GetExpressions(), [&Names](const TObjectPtr<UMaterialExpression>& Expression)
+	{
+		return Names.Contains(Expression->GetName());
+	});
+}
+
+static FString PackageFilename(const FString& PackageName)
+{
+	return FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+}
+
 TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 {
 	TStrongObjectPtr<UMaterial> Material;
 	TStrongObjectPtr<UMaterialFunction> Function;
+	TArray<TWeakObjectPtr<UPackage>> SavedPackages;
+	TArray<FString> SavedFilenames;
 
 	BEFORE_EACH()
 	{
 		Material.Reset(NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient));
 		Function.Reset(NewObject<UMaterialFunction>(GetTransientPackage(), NAME_None, RF_Transient));
+	}
+
+	AFTER_EACH()
+	{
+		for (const TWeakObjectPtr<UPackage>& SavedPackage : SavedPackages)
+		{
+			if (UPackage* Package = SavedPackage.Get())
+			{
+				ForEachObjectWithPackage(Package, [](UObject* Object)
+				{
+					Object->ClearFlags(RF_Standalone);
+					return true;
+				});
+				ResetLoaders(Package);
+			}
+		}
+		for (const FString& Filename : SavedFilenames)
+		{
+			IFileManager::Get().Delete(*Filename);
+		}
+	}
+
+	UPackage* CreateSavedPackage(const FString& PackageName)
+	{
+		UPackage* Package = CreatePackage(*PackageName);
+		SavedPackages.Add(Package);
+		SavedFilenames.Add(PackageFilename(PackageName));
+		return Package;
+	}
+
+	UMaterialFunction* LoadSavedCopy(const UPackage& SavedPackage, const TCHAR* AssetName)
+	{
+		const FString CopyPackageName = SavedPackage.GetName() + ReloadedPackageSuffix;
+		SavedFilenames.Add(PackageFilename(CopyPackageName));
+		if (IFileManager::Get().Copy(*PackageFilename(CopyPackageName), *PackageFilename(SavedPackage.GetName())) != COPY_OK)
+		{
+			return nullptr;
+		}
+		UPackage* CopyPackage = LoadPackage(nullptr, *CopyPackageName, LOAD_None);
+		SavedPackages.Add(CopyPackage);
+		return CopyPackage ? FindObject<UMaterialFunction>(CopyPackage, AssetName) : nullptr;
+	}
+
+	void AddMissingEntriesToFunction()
+	{
+		UMaterialExpression* Deleted = UMaterialEditingLibrary::CreateMaterialExpressionInFunction(Function.Get(), UMaterialExpressionConstant::StaticClass());
+		Deleted->MarkAsGarbage();
+		FMaterialExpressionCollection& Collection = Function->GetExpressionCollection();
+		Collection.Expressions.Add(nullptr);
+		Collection.EditorComments.Add(nullptr);
 	}
 
 	FString BaseColorPinName() const
@@ -394,6 +495,64 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 		ASSERT_THAT(IsTrue(Result.bSucceeded));
 		ASSERT_THAT(IsTrue(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedRootPin)));
 		ASSERT_THAT(IsNull(Material->GetEditorOnlyData()->BaseColor.Expression));
+	}
+
+	TEST_METHOD(DuplicatedFunctionKeepsReplacedExpressionsThroughSaveAndReload)
+	{
+		const FName SourceName = MakeUniqueObjectName(GetTransientPackage(), UMaterialFunction::StaticClass(), FName(LateSortingSourceFunctionName));
+		const TStrongObjectPtr<UMaterialFunction> Source(NewObject<UMaterialFunction>(GetTransientPackage(), SourceName));
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::Import(Source.Get(), FunctionInputOutputNodes(), false, false).bSucceeded));
+
+		UPackage* Package = CreateSavedPackage(SavedPackageRoot + FGuid::NewGuid().ToString());
+		const TStrongObjectPtr<UMaterialFunction> Duplicate(DuplicateObject<UMaterialFunction>(Source.Get(), Package, DuplicatedFunctionName));
+		Duplicate->SetFlags(RF_Public | RF_Standalone);
+		const TWeakObjectPtr<UObject> Leftover(FindLeftoverEditorOnlyData(*Duplicate));
+		ASSERT_THAT(IsTrue(Leftover.IsValid()));
+
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Duplicate.Get(), FunctionInputOutputNodes(), true, true);
+
+		ASSERT_THAT(IsTrue(Result.bSucceeded));
+		ASSERT_THAT(IsTrue(Result.bSaved));
+		ASSERT_THAT(IsTrue(HoldsExactlyExpressionsNamed(*Duplicate, Result.CreatedExpressions)));
+		ASSERT_THAT(IsTrue(Leftover.IsValid()));
+		ASSERT_THAT(IsFalse(Leftover->IsIn(Package)));
+		ASSERT_THAT(IsTrue(Leftover->GetOuter()->IsA<UMaterialFunctionInterface>()));
+
+		const UMaterialFunction* Reloaded = LoadSavedCopy(*Package, DuplicatedFunctionName);
+		ASSERT_THAT(IsNotNull(Reloaded));
+		ASSERT_THAT(IsTrue(HoldsExactlyExpressionsNamed(*Reloaded, Result.CreatedExpressions)));
+	}
+
+	TEST_METHOD(ReplaceDropsMissingEntriesAndReportsThem)
+	{
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), false, false).bSucceeded));
+		AddMissingEntriesToFunction();
+
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), true, false);
+
+		ASSERT_THAT(IsTrue(Result.bSucceeded));
+		ASSERT_THAT(IsTrue(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::MissingEntries)));
+		ASSERT_THAT(IsTrue(HoldsExactlyExpressionsNamed(*Function, Result.CreatedExpressions)));
+		ASSERT_THAT(IsTrue(Function->GetEditorComments().IsEmpty()));
+	}
+
+	TEST_METHOD(AppendDropsMissingEntriesAndKeepsLiveExpressions)
+	{
+		ASSERT_THAT(IsTrue(FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), false, false).bSucceeded));
+		const TArray<TObjectPtr<UMaterialExpression>> LiveExpressions(Function->GetExpressions());
+		AddMissingEntriesToFunction();
+
+		const FAgentGraphImportResult Result = FAgentGraphImporter::Import(Function.Get(), FunctionInputOutputNodes(), false, false);
+
+		ASSERT_THAT(IsTrue(Result.bSucceeded));
+		ASSERT_THAT(IsTrue(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::MissingEntries)));
+		ASSERT_THAT(AreEqual(LiveExpressions.Num() + Result.CreatedExpressions.Num(), Function->GetExpressions().Num()));
+		ASSERT_THAT(IsTrue(HoldsOnlyLiveExpressions(*Function)));
+		ASSERT_THAT(IsTrue(Algo::AllOf(LiveExpressions, [this](const TObjectPtr<UMaterialExpression>& Expression)
+		{
+			return Function->GetExpressions().Contains(Expression);
+		})));
+		ASSERT_THAT(IsTrue(Function->GetEditorComments().IsEmpty()));
 	}
 };
 

@@ -19,7 +19,8 @@ enum class EAgentGraphImportDiagnosticKind : uint8
 	UnmatchedFunctionIO,
 	NoRoot,
 	CompileError,
-	SaveFailed
+	SaveFailed,
+	MissingEntries
 };
 
 USTRUCT(BlueprintType)
