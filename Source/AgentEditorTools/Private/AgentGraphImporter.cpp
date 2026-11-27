@@ -2,6 +2,7 @@
 
 #include "AgentGraphImporter.h"
 
+#include "Containers/ArrayView.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphUtilities.h"
@@ -54,6 +55,49 @@ static constexpr TCHAR SaveFailedFormat[] = TEXT("Saving package %s failed");
 static constexpr TCHAR AssetPathNotFoundFormat[] = TEXT("No asset was found at '%s'");
 static constexpr TCHAR FileReadFailedFormat[] = TEXT("Reading the T3D file '%s' failed");
 static constexpr TCHAR ObjectNameSeparator[] = TEXT(".");
+static constexpr TCHAR ShadingModelPinNameSeparator[] = TEXT(" or ");
+
+struct FShadingModelPinName
+{
+	EMaterialShadingModel ShadingModel;
+	const TCHAR* PinName;
+};
+
+static constexpr FShadingModelPinName MetallicPinNames[] = { { MSM_Hair, TEXT("Scatter") }, { MSM_Eye, TEXT("Curvature") } };
+static constexpr TCHAR MetallicDefaultPinName[] = TEXT("Metallic");
+static constexpr FShadingModelPinName NormalPinNames[] = { { MSM_Hair, TEXT("Tangent") } };
+static constexpr TCHAR NormalDefaultPinName[] = TEXT("Normal");
+static constexpr FShadingModelPinName SubsurfaceColorPinNames[] = { { MSM_Cloth, TEXT("Fuzz Color") } };
+static constexpr TCHAR SubsurfaceColorDefaultPinName[] = TEXT("Subsurface Color");
+static constexpr FShadingModelPinName CustomData0PinNames[] =
+{
+	{ MSM_ClearCoat, TEXT("Clear Coat") },
+	{ MSM_Hair, TEXT("Backlit") },
+	{ MSM_Cloth, TEXT("Cloth") },
+	{ MSM_Eye, TEXT("Iris Mask") },
+	{ MSM_SubsurfaceProfile, TEXT("Curvature") }
+};
+static constexpr TCHAR CustomData0DefaultPinName[] = TEXT("Custom Data 0");
+static constexpr FShadingModelPinName CustomData1PinNames[] = { { MSM_ClearCoat, TEXT("Clear Coat Roughness") }, { MSM_Eye, TEXT("Iris Distance") } };
+static constexpr TCHAR CustomData1DefaultPinName[] = TEXT("Custom Data 1");
+
+static FString JoinShadingModelPinNames(FMaterialShadingModelField ShadingModels, TConstArrayView<FShadingModelPinName> CustomPinNames, const TCHAR* DefaultPinName)
+{
+	TArray<FString> PinNames;
+	for (const FShadingModelPinName& CustomPinName : CustomPinNames)
+	{
+		if (ShadingModels.HasShadingModel(CustomPinName.ShadingModel))
+		{
+			PinNames.Add(CustomPinName.PinName);
+			ShadingModels.RemoveShadingModel(CustomPinName.ShadingModel);
+		}
+	}
+	if (ShadingModels.CountShadingModels() != 0)
+	{
+		PinNames.Add(DefaultPinName);
+	}
+	return FString::Join(PinNames, ShadingModelPinNameSeparator);
+}
 
 struct FRootPinLinks
 {
@@ -359,6 +403,11 @@ static void RegisterPastedNodes(const UMaterialGraph& Graph, const TSet<UEdGraph
 	}
 }
 
+static bool IsJoinedFromLocalizedPieces(const FText& InputName)
+{
+	return FTextInspector::GetTextId(InputName).IsEmpty();
+}
+
 static bool IsRootInputPinNamed(const UMaterialGraph& Graph, const UEdGraphPin& Pin, FName PinName)
 {
 	if (Pin.PinName == PinName)
@@ -366,9 +415,20 @@ static bool IsRootInputPinNamed(const UMaterialGraph& Graph, const UEdGraphPin& 
 		return true;
 	}
 	check(Graph.MaterialInputs.IsValidIndex(Pin.SourceIndex));
-	const FText& InputName = Graph.MaterialInputs[Pin.SourceIndex].GetName();
+	const FMaterialInputInfo& Input = Graph.MaterialInputs[Pin.SourceIndex];
+	const FText& InputName = Input.GetName();
+	const FString ActualPinName = Pin.PinName.ToString();
+	const FString InputDisplayName = InputName.ToString();
+
+	if (IsJoinedFromLocalizedPieces(InputName))
+	{
+		check(Graph.Material);
+		const FString EnglishName = FAgentGraphImporter::GetEnglishRootInputName(Input.GetProperty(), Graph.Material->GetShadingModels());
+		return !EnglishName.IsEmpty() && FAgentGraphImporter::MatchesRootPinSourceName(PinName, ActualPinName, InputDisplayName, EnglishName);
+	}
+
 	const FString* InputSourceName = FTextInspector::GetSourceString(InputName);
-	return InputSourceName && FAgentGraphImporter::MatchesRootPinSourceName(PinName, Pin.PinName.ToString(), InputName.ToString(), *InputSourceName);
+	return InputSourceName && FAgentGraphImporter::MatchesRootPinSourceName(PinName, ActualPinName, InputDisplayName, *InputSourceName);
 }
 
 static UEdGraphPin* FindRootInputPin(const UMaterialGraph& Graph, FName PinName)
@@ -475,6 +535,27 @@ bool FAgentGraphImporter::MatchesRootPinSourceName(FName RequestedPinName, const
 	}
 	const FString SourcePinName = InputSourceName + ActualPinName.RightChop(InputDisplayName.Len());
 	return !SourcePinName.IsEmpty() && FName(*SourcePinName) == RequestedPinName;
+}
+
+FString FAgentGraphImporter::GetEnglishRootInputName(EMaterialProperty Property, FMaterialShadingModelField ShadingModels)
+{
+	using namespace AgentGraphImporterLocal;
+
+	switch (Property)
+	{
+	case MP_Metallic:
+		return JoinShadingModelPinNames(ShadingModels, MetallicPinNames, MetallicDefaultPinName);
+	case MP_Normal:
+		return JoinShadingModelPinNames(ShadingModels, NormalPinNames, NormalDefaultPinName);
+	case MP_SubsurfaceColor:
+		return JoinShadingModelPinNames(ShadingModels, SubsurfaceColorPinNames, SubsurfaceColorDefaultPinName);
+	case MP_CustomData0:
+		return JoinShadingModelPinNames(ShadingModels, CustomData0PinNames, CustomData0DefaultPinName);
+	case MP_CustomData1:
+		return JoinShadingModelPinNames(ShadingModels, CustomData1PinNames, CustomData1DefaultPinName);
+	default:
+		return FString();
+	}
 }
 
 FAgentGraphImportResult FAgentGraphImporter::ImportFile(const FString& AssetPath, const FString& T3DFilePath, bool bReplace, bool bSave)

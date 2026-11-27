@@ -5,6 +5,8 @@
 #include "AgentGraphImporter.h"
 #include "AgentGraphImportResult.h"
 #include "CQTest.h"
+#include "Engine/EngineTypes.h"
+#include "Internationalization/Internationalization.h"
 #include "Internationalization/Text.h"
 #include "MaterialEditingLibrary.h"
 #include "Materials/Material.h"
@@ -15,9 +17,11 @@
 #include "Materials/MaterialFunction.h"
 #include "MaterialExpressionIO.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
+#include "SceneTypes.h"
 #include "Tests/Support/AgentGraphImportT3D.h"
 #include "UObject/StrongObjectPtr.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 
 namespace AgentGraphImporterTests
 {
@@ -49,6 +53,25 @@ static constexpr TCHAR OtherSourceInputName[] = TEXT("Opacity");
 static constexpr TCHAR LocalizedSuffixedInputName[] = TEXT("Brechung");
 static constexpr TCHAR SourceSuffixedInputName[] = TEXT("Refraction");
 static constexpr TCHAR PinNameSuffix[] = TEXT(" (IOR)");
+static constexpr TCHAR EnglishCulture[] = TEXT("en");
+static constexpr TCHAR KoreanCulture[] = TEXT("ko");
+static constexpr TCHAR ShadingModelsPropertyName[] = TEXT("ShadingModels");
+static constexpr EMaterialProperty ShadingModelNamedProperties[] = { MP_Metallic, MP_Normal, MP_SubsurfaceColor, MP_CustomData0, MP_CustomData1 };
+
+struct FEnglishRootPinCase
+{
+	EMaterialShadingModel ShadingModel;
+	EMaterialProperty Property;
+	const TCHAR* PinName;
+};
+
+static constexpr FEnglishRootPinCase EnglishRootPinCases[] =
+{
+	{ MSM_SingleLayerWater, MP_Normal, TEXT("Normal") },
+	{ MSM_DefaultLit, MP_SubsurfaceColor, TEXT("Subsurface Color") },
+	{ MSM_Cloth, MP_SubsurfaceColor, TEXT("Fuzz Color") },
+	{ MSM_ClearCoat, MP_CustomData0, TEXT("Clear Coat") }
+};
 
 static constexpr TCHAR FunctionInputNode[] = TEXT("MaterialGraphNode_0");
 static constexpr TCHAR FunctionOutputNode[] = TEXT("MaterialGraphNode_1");
@@ -92,6 +115,46 @@ static FString FunctionInputOutputNodes()
 			Pin(FunctionInputOutputPin, OutputPinName, EGPD_Output, InputToOutput))
 		+ ExpressionNode(FunctionOutputNode, *UMaterialExpressionFunctionOutput::StaticClass(), FunctionOutputName, FunctionOutputProperties, 300, FunctionOutputNodeGuid,
 			Pin(FunctionOutputInputPin, FunctionOutputInputPinName, EGPD_Input, OutputFromInput));
+}
+
+struct FRestoreCultureGuard
+{
+	FInternationalization::FCultureStateSnapshot OriginalCultureState;
+
+	FRestoreCultureGuard()
+	{
+		FInternationalization::Get().BackupCultureState(OriginalCultureState);
+	}
+
+	~FRestoreCultureGuard()
+	{
+		FInternationalization::Get().RestoreCultureState(OriginalCultureState);
+	}
+
+	FRestoreCultureGuard(const FRestoreCultureGuard&) = delete;
+	FRestoreCultureGuard& operator=(const FRestoreCultureGuard&) = delete;
+	FRestoreCultureGuard(FRestoreCultureGuard&&) = delete;
+	FRestoreCultureGuard& operator=(FRestoreCultureGuard&&) = delete;
+};
+
+static TArray<FMaterialShadingModelField> ShadingModelCombinations()
+{
+	TArray<FMaterialShadingModelField> Combinations;
+	FMaterialShadingModelField AllModels;
+	for (int32 First = 0; First < MSM_NUM; ++First)
+	{
+		const EMaterialShadingModel FirstModel = static_cast<EMaterialShadingModel>(First);
+		AllModels.AddShadingModel(FirstModel);
+		Combinations.Add(FMaterialShadingModelField(FirstModel));
+		for (int32 Second = First + 1; Second < MSM_NUM; ++Second)
+		{
+			FMaterialShadingModelField Pair(FirstModel);
+			Pair.AddShadingModel(static_cast<EMaterialShadingModel>(Second));
+			Combinations.Add(Pair);
+		}
+	}
+	Combinations.Add(AllModels);
+	return Combinations;
 }
 
 template <typename ExpressionType, typename OwnerType>
@@ -158,6 +221,46 @@ TEST_CLASS(AgentGraphImporter, "AgentEditorTools.Unit.GraphImport")
 
 		ASSERT_THAT(IsTrue(FAgentGraphImporter::MatchesRootPinSourceName(FName(*RequestedPinName), ActualPinName, LocalizedSuffixedInputName, SourceSuffixedInputName)));
 		ASSERT_THAT(IsFalse(FAgentGraphImporter::MatchesRootPinSourceName(SourceSuffixedInputName, ActualPinName, LocalizedSuffixedInputName, SourceSuffixedInputName)));
+	}
+
+	TEST_METHOD(EnglishRootInputNamesMatchEngineEnglishNames)
+	{
+		const FRestoreCultureGuard CultureGuard;
+		ASSERT_THAT(IsTrue(FInternationalization::Get().SetCurrentLanguage(EnglishCulture)));
+
+		FStructProperty* ShadingModelsProperty = FindFProperty<FStructProperty>(UMaterial::StaticClass(), ShadingModelsPropertyName);
+		ASSERT_THAT(IsNotNull(ShadingModelsProperty));
+		FMaterialShadingModelField& MaterialShadingModels = *ShadingModelsProperty->ContainerPtrToValuePtr<FMaterialShadingModelField>(Material.Get());
+
+		for (const FMaterialShadingModelField& ShadingModels : ShadingModelCombinations())
+		{
+			MaterialShadingModels = ShadingModels;
+			for (const EMaterialProperty Property : ShadingModelNamedProperties)
+			{
+				const FString EngineName = FMaterialAttributeDefinitionMap::GetDisplayNameForMaterial(Property, Material.Get()).ToString();
+				ASSERT_THAT(AreEqual(EngineName, FAgentGraphImporter::GetEnglishRootInputName(Property, ShadingModels)));
+			}
+		}
+	}
+
+	TEST_METHOD(EnglishRootPinNamesConnectUnderKorean)
+	{
+		const FRestoreCultureGuard CultureGuard;
+		ASSERT_THAT(IsTrue(FInternationalization::Get().SetCurrentLanguage(KoreanCulture)));
+
+		for (const FEnglishRootPinCase& Case : EnglishRootPinCases)
+		{
+			TStrongObjectPtr<UMaterial> CaseMaterial(NewObject<UMaterial>(GetTransientPackage(), NAME_None, RF_Transient));
+			CaseMaterial->SetShadingModel(Case.ShadingModel);
+
+			const FAgentGraphImportResult Result = FAgentGraphImporter::Import(CaseMaterial.Get(), ConstantMultiplyNodes() + RootLinkedToMultiply(Case.PinName), false, false);
+
+			ASSERT_THAT(IsTrue(Result.bSucceeded));
+			ASSERT_THAT(IsFalse(AgentGraphImportT3D::HasDiagnostic(Result, EAgentGraphImportDiagnosticKind::UnmatchedRootPin)));
+			UMaterialExpressionMultiply* Multiply = FindExpression<UMaterialExpressionMultiply>(*CaseMaterial);
+			ASSERT_THAT(IsNotNull(Multiply));
+			ASSERT_THAT(IsTrue(CaseMaterial->GetExpressionInputForProperty(Case.Property)->Expression == Multiply));
+		}
 	}
 
 	TEST_METHOD(ConstantTimesConstantFeedsBaseColor)
