@@ -2,11 +2,11 @@
 
 #include "AgentGraphImporter.h"
 
+#include "AgentEditorAssetUtils.h"
 #include "Containers/ArrayView.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphUtilities.h"
-#include "Editor.h"
 #include "Internationalization/Text.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "MaterialEditingLibrary.h"
@@ -25,13 +25,10 @@
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialFunctionInterface.h"
 #include "Misc/FileHelper.h"
-#include "Misc/PackageName.h"
 #include "Misc/StringFormatArg.h"
-#include "Subsystems/AssetEditorSubsystem.h"
 #include "UObject/FindObjectFlags.h"
 #include "UObject/ObjectPtr.h"
 #include "UObject/Package.h"
-#include "UObject/SavePackage.h"
 #include "UObject/StrongObjectPtr.h"
 #include "UObject/UObjectHash.h"
 
@@ -59,7 +56,6 @@ static constexpr TCHAR UnresolvedRootLinkFormat[] = TEXT("Root pin '%s' links to
 static constexpr TCHAR SaveFailedFormat[] = TEXT("Saving package %s failed");
 static constexpr TCHAR AssetPathNotFoundFormat[] = TEXT("No asset was found at '%s'");
 static constexpr TCHAR FileReadFailedFormat[] = TEXT("Reading the T3D file '%s' failed");
-static constexpr TCHAR ObjectNameSeparator[] = TEXT(".");
 static constexpr TCHAR ShadingModelPinNameSeparator[] = TEXT(" or ");
 static constexpr TCHAR UnmatchedFunctionInputFormat[] = TEXT("The replaced function had an input named '{0}' that the imported text does not have; function calls lose that input's connection");
 static constexpr TCHAR UnmatchedFunctionOutputFormat[] = TEXT("The replaced function had an output named '{0}' that the imported text does not have; function calls lose that output's connections");
@@ -219,16 +215,6 @@ static bool ExtractRootNodes(const FString& Text, FString& OutNodeText, TArray<F
 		bFoundRoot = true;
 		SearchFrom = BlockEnd;
 	}
-}
-
-static bool IsAssetEditorOpen(UObject& Asset)
-{
-	if (!GEditor)
-	{
-		return false;
-	}
-	UAssetEditorSubsystem* AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-	return AssetEditors && !AssetEditors->FindEditorsForAsset(&Asset).IsEmpty();
 }
 
 static void DetachLeftoverEditorOnlyData(UMaterialFunction& Function)
@@ -601,32 +587,6 @@ static void CopyExpressionsBackToFunction(const UMaterial& EditMaterial, UMateri
 	}
 }
 
-static bool SaveAssetPackage(UObject& Asset)
-{
-	UPackage* Package = Asset.GetPackage();
-	FString Filename;
-	if (!FPackageName::TryConvertLongPackageNameToFilename(Package->GetName(), Filename, FPackageName::GetAssetPackageExtension()))
-	{
-		return false;
-	}
-
-	FSavePackageArgs SaveArgs;
-	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-	SaveArgs.SaveFlags = SAVE_NoError;
-	return UPackage::SavePackage(Package, &Asset, *Filename, SaveArgs);
-}
-
-static UObject* LoadAssetAtPath(const FString& AssetPath)
-{
-	const FString PackageName = FPackageName::ObjectPathToPackageName(AssetPath);
-	if (!FPackageName::IsValidLongPackageName(PackageName))
-	{
-		return nullptr;
-	}
-	const FString ObjectPath = PackageName == AssetPath ? AssetPath + ObjectNameSeparator + FPackageName::GetShortName(PackageName) : AssetPath;
-	return LoadObject<UObject>(nullptr, *ObjectPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
-}
-
 }
 
 bool FAgentGraphImporter::MatchesRootPinSourceName(FName RequestedPinName, const FString& ActualPinName, const FString& InputDisplayName, const FString& InputSourceName)
@@ -665,7 +625,7 @@ FAgentGraphImportResult FAgentGraphImporter::ImportFile(const FString& AssetPath
 	using namespace AgentGraphImporterLocal;
 
 	FAgentGraphImportResult Result;
-	UObject* Asset = LoadAssetAtPath(AssetPath);
+	UObject* Asset = AgentEditorAssetUtils::LoadAssetAtPath(AssetPath);
 	if (!Asset)
 	{
 		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::AssetNotFound, FString::Printf(AssetPathNotFoundFormat, *AssetPath));
@@ -705,7 +665,7 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 		return Finish(Result);
 	}
 
-	if (IsAssetEditorOpen(*Asset))
+	if (AgentEditorAssetUtils::IsAssetEditorOpen(*Asset))
 	{
 		AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::EditorOpen, FString::Printf(EditorOpenFormat, *Result.Asset));
 		return Finish(Result);
@@ -799,7 +759,7 @@ FAgentGraphImportResult FAgentGraphImporter::Import(UObject* Asset, const FStrin
 
 	if (bSave)
 	{
-		Result.bSaved = SaveAssetPackage(*Asset);
+		Result.bSaved = AgentEditorAssetUtils::SaveAssetPackage(*Asset);
 		if (!Result.bSaved)
 		{
 			AddDiagnostic(Result, EAgentGraphImportDiagnosticKind::SaveFailed, FString::Printf(SaveFailedFormat, *Asset->GetPackage()->GetName()));

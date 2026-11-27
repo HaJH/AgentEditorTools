@@ -17,6 +17,7 @@ public class AgentEditorTools : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
+			"AssetTools",
 			"Json",
 			"JsonUtilities",
 			"MaterialEditor",

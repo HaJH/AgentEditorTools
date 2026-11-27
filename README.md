@@ -9,6 +9,7 @@ The primary user is an AI agent. The same functions are planned to be callable b
 Planned features:
 
 - Material graph import: pastes material editor text (T3D) into a material or material function in one synchronous call, without opening the asset editor, and returns a result with diagnostics.
+- Material instance state: applies the target state of one material instance constant, read from a JSON file, in one call. It checks every parameter name, texture and texture sampler switch first and writes nothing when anything is wrong; otherwise it creates the instance if needed, clears its overrides, writes every value without per-value updates, sets the sampler switch each texture needs, updates the instance once and saves it. Writing static switches one at a time through the editor's setters recompiles the parent material per switch; this tool avoids that cost.
 - Modal dialog log: records which modal dialogs open and close to a JSON Lines file under the project's `Saved` directory, so an agent whose calls stopped responding can read what is blocking the editor. It records only; it never answers a dialog.
 
 Planned entry points, all sharing one core:

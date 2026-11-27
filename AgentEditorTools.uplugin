@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "0.1",
 	"FriendlyName": "AgentEditorTools",
-	"Description": "Editor tools that let AI agents edit assets without driving the editor UI: imports material graph text in a single call without opening an asset editor, and records which modal dialogs are open so a blocked agent can read them from disk.",
+	"Description": "Editor tools that let AI agents edit assets without driving the editor UI: imports material graph text in a single call without opening an asset editor, applies the full target state of a material instance (parameter values and texture sampler switches) from a file with a single update instead of one per value, and records which modal dialogs are open so a blocked agent can read them from disk.",
 	"Category": "Editor",
 	"CreatedBy": "Jeonghyeon Ha",
 	"CreatedByURL": "https://github.com/HaJH/AgentEditorTools",
