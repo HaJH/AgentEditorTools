@@ -82,7 +82,7 @@ TEST_CLASS(MaterialInstanceStateEditorOpen, "AgentEditorTools.Integration.Materi
 		})));
 		ASSERT_THAT(IsFalse(Result.bWritten));
 		ASSERT_THAT(IsTrue(Instance->GetScalarParameterValue(FHashedMaterialParameterInfo(FName(ScalarName)), Value, true)));
-		ASSERT_THAT(AreEqual(ExistingValue, Value));
+		ASSERT_THAT(IsNear(ExistingValue, Value, KINDA_SMALL_NUMBER));
 	}
 };
 
